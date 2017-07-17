@@ -222,7 +222,7 @@ type FormulaParser struct {
 
 	// Reference levels for string variables are omitted when
 	// forming indicators
-	RefLevels map[string]string
+	refLevels map[string]string
 
 	// Codes is a map from variable names to maps from variable
 	// values to integer codes.  The distinct values of a
@@ -230,10 +230,13 @@ type FormulaParser struct {
 	// integers 0, 1, ...  Can be set manually, but if it is not
 	// will be computed from data.  Not used if all variables are
 	// of float64 type.
-	Codes map[string]map[string]int
+	codes map[string]map[string]int
 
 	// Map from function name to function.
-	Funcs map[string]Func
+	funcs map[string]Func
+
+	// Variables to retain that are not in the formula
+	keep []string
 
 	// The final data produced by parsing the formula
 	Data *ColSet
@@ -250,48 +253,92 @@ type FormulaParser struct {
 	names    []string
 }
 
-func New(formula string, rawdata dstream.Dstream, reflevels map[string]string,
-	codes map[string]map[string]int, funcs map[string]Func) *FormulaParser {
+func New(formula string, rawdata dstream.Dstream) *FormulaParser {
 
 	fp := &FormulaParser{
-		Formulas:  []string{formula},
-		RawData:   rawdata,
-		RefLevels: reflevels,
-		Funcs:     funcs,
-		Codes:     codes,
+		Formulas: []string{formula},
+		RawData:  rawdata,
 	}
-	fp.init()
 
 	return fp
 }
 
-func NewMulti(formulas []string, rawdata dstream.Dstream,
-	reflevels map[string]string, codes map[string]map[string]int,
-	funcs map[string]Func) *FormulaParser {
+func (fp *FormulaParser) RefLevels(reflevels map[string]string) *FormulaParser {
+	fp.refLevels = reflevels
+	return fp
+}
+
+func (fp *FormulaParser) Codes(codes map[string]map[string]int) *FormulaParser {
+	fp.codes = codes
+	return fp
+}
+
+func (fp *FormulaParser) Funcs(funcs map[string]Func) *FormulaParser {
+	fp.funcs = funcs
+	return fp
+}
+
+func (fp *FormulaParser) Keep(vars []string) *FormulaParser {
+
+	names := fp.RawData.Names()
+	mp := make(map[string]bool)
+	for _, na := range names {
+		mp[na] = true
+	}
+	for _, v := range vars {
+		if !mp[v] {
+			msg := fmt.Sprintf("Formula: variable '%s' not found", v)
+			panic(msg)
+		}
+	}
+
+	fp.keep = vars
+	return fp
+}
+
+func (fp *FormulaParser) Done() dstream.Dstream {
+	fp.init()
+	return fp
+}
+
+// NewMulti accepts several formulas and includes all their parsed
+// terms in the resulting data set.
+func NewMulti(formulas []string, rawdata dstream.Dstream) *FormulaParser {
 
 	fp := &FormulaParser{
-		Formulas:  formulas,
-		RawData:   rawdata,
-		RefLevels: reflevels,
-		Funcs:     funcs,
-		Codes:     codes,
+		Formulas: formulas,
+		RawData:  rawdata,
 	}
-	fp.init()
 
 	return fp
+}
+
+func (fp *FormulaParser) Close() {
 }
 
 // ColSet represents a design matrix.  It is an ordered set of named
 // numeric data columns.
 type ColSet struct {
 	Names []string
-	Data  [][]float64
+	Data  []interface{}
 }
 
 // Extend a ColSet with the data of another ColSet.
 func (c *ColSet) Extend(o *ColSet) {
-	c.Names = append(c.Names, o.Names...)
-	c.Data = append(c.Data, o.Data...)
+
+	// Don't add duplicate terms (which may arise when parsing
+	// multiple formulas together or when using Keep).
+	mp := make(map[string]bool)
+	for _, na := range c.Names {
+		mp[na] = true
+	}
+
+	for j, na := range o.Names {
+		if !mp[na] {
+			c.Names = append(c.Names, na)
+			c.Data = append(c.Data, o.Data[j])
+		}
+	}
 }
 
 // checkConv ensures that the variables with the given names have been
@@ -331,7 +378,7 @@ func (fp *FormulaParser) Get(na string) interface{} {
 		}
 	}
 
-	msg := fmt.Sprintf("Variable '%s not found", na)
+	msg := fmt.Sprintf("Formla: variable '%s not found", na)
 	panic(msg)
 	return nil
 }
@@ -341,9 +388,11 @@ func (fp *FormulaParser) Get(na string) interface{} {
 // variable.
 func (fp *FormulaParser) setCodes() {
 
-	fp.Codes = make(map[string]map[string]int)
+	fp.codes = make(map[string]map[string]int)
 	fp.facNames = make(map[string][]string)
 
+	// Codes requires resettable data, since we pass through
+	// through the data to get the code information.
 	fp.RawData.Reset()
 	names := fp.RawData.Names()
 
@@ -361,13 +410,13 @@ func (fp *FormulaParser) setCodes() {
 				// Get the category codes for this
 				// variable.  If this is the first
 				// chunk, start from scratch.
-				codes, ok := fp.Codes[na]
+				codes, ok := fp.codes[na]
 				if !ok {
 					codes = make(map[string]int)
-					fp.Codes[na] = codes
+					fp.codes[na] = codes
 				}
 
-				ref := fp.RefLevels[na]
+				ref := fp.refLevels[na]
 				for _, x := range v {
 					if x == ref {
 						continue
@@ -393,9 +442,9 @@ func (fp *FormulaParser) setCodes() {
 func (fp *FormulaParser) codeStrings(na, ref string, s []string) {
 
 	// Get the category codes for this variable
-	codes := fp.Codes[na]
+	codes := fp.codes[na]
 
-	var dat [][]float64
+	var dat []interface{}
 	for _, _ = range codes {
 		dat = append(dat, make([]float64, len(s)))
 	}
@@ -405,9 +454,9 @@ func (fp *FormulaParser) codeStrings(na, ref string, s []string) {
 			continue
 		}
 		c := codes[x]
-		_ = dat[c]
-		_ = dat[c][i]
-		dat[c][i] = 1
+		//_ = dat[c] TODO delete
+		//_ = dat[c][i] TODO delete
+		dat[c].([]float64)[i] = 1
 	}
 
 	fp.workData[na] = &ColSet{Names: fp.facNames[na], Data: dat}
@@ -416,11 +465,16 @@ func (fp *FormulaParser) codeStrings(na, ref string, s []string) {
 func (fp *FormulaParser) getRawCol(na string) interface{} {
 
 	j := -1
-	var x string
-	for j, x = range fp.rawNames {
+	for i, x := range fp.rawNames {
 		if x == na {
+			j = i
 			break
 		}
+	}
+
+	if j == -1 {
+		msg := fmt.Sprintf("Formula: variable '%s' not found.", na)
+		panic(msg)
 	}
 
 	return fp.RawData.GetPos(j)
@@ -439,12 +493,12 @@ func (fp *FormulaParser) convertColumn(na string) {
 	s := fp.getRawCol(na)
 	switch s := s.(type) {
 	case []string:
-		ref := fp.RefLevels[na]
+		ref := fp.refLevels[na]
 		fp.codeStrings(na, ref, s)
 	case []float64:
 		fp.workData[na] = &ColSet{
 			Names: []string{na},
-			Data:  [][]float64{s},
+			Data:  []interface{}{s},
 		}
 	default:
 		panic(fmt.Sprintf("unkown type %T in convertColumn", s))
@@ -460,7 +514,7 @@ func (fp *FormulaParser) doPlus(a, b string) *ColSet {
 	ds2 := fp.workData[b]
 
 	var names []string
-	var dat [][]float64
+	var dat []interface{}
 
 	names = append(names, ds1.Names...)
 	names = append(names, ds2.Names...)
@@ -479,12 +533,12 @@ func (fp *FormulaParser) doTimes(a, b string) *ColSet {
 	ds2 := fp.workData[b]
 
 	var names []string
-	var dat [][]float64
+	var dat []interface{}
 
 	for j1, na1 := range ds1.Names {
 		for j2, na2 := range ds2.Names {
-			d1 := ds1.Data[j1]
-			d2 := ds2.Data[j2]
+			d1 := ds1.Data[j1].([]float64)
+			d2 := ds2.Data[j2].([]float64)
 			x := make([]float64, len(d1))
 			for i, _ := range x {
 				x[i] = d1[i] * d2[i]
@@ -525,7 +579,7 @@ func (fp *FormulaParser) createIcept() bool {
 	for i, _ := range x {
 		x[i] = 1
 	}
-	fp.workData["icept"] = &ColSet{Names: []string{"icept"}, Data: [][]float64{x}}
+	fp.workData["icept"] = &ColSet{Names: []string{"icept"}, Data: []interface{}{x}}
 
 	return true
 }
@@ -549,12 +603,11 @@ func (fp *FormulaParser) init() error {
 		fp.rpn = append(fp.rpn, rpn)
 	}
 
-	if fp.Codes == nil {
+	if fp.codes == nil {
 		fp.setCodes()
 	}
 
 	// Read one chunk to get the number of variables
-	fp.RawData.Reset()
 	fp.Next()
 	if fp.ErrorState != nil {
 		return fp.ErrorState
@@ -648,6 +701,11 @@ func (fp *FormulaParser) Next() bool {
 		fp.doFormula(rpn)
 	}
 
+	for _, na := range fp.keep {
+		fp.Data.Names = append(fp.Data.Names, na)
+		fp.Data.Data = append(fp.Data.Data, fp.RawData.Get(na))
+	}
+
 	fp.workData = nil
 
 	return true
@@ -660,7 +718,7 @@ func (fp *FormulaParser) runFuncs(rpn []*token) {
 			continue
 		}
 
-		f := fp.Funcs[tok.funcn]
+		f := fp.funcs[tok.funcn]
 		x := fp.getRawCol(tok.arg)
 		switch x := x.(type) {
 		case []float64:
@@ -685,39 +743,4 @@ func find(s []string, x string) int {
 		}
 	}
 	return -1
-}
-
-// ParseAll runs the entire data set through the formula parser and
-// returns a Data object backed by array storage.  The variables
-// passed as arguments are copied from the input dataset without using
-// the formula.
-func (fp *FormulaParser) ParseAll(others []string) dstream.Dstream {
-
-	fp.Reset()
-	nvar := fp.nvar
-	nv := nvar + len(others)
-	data := make([][]interface{}, nv)
-
-	var ox []int
-	rnames := fp.RawData.Names()
-	for _, s := range others {
-		i := find(rnames, s)
-		if i == -1 {
-			msg := fmt.Sprintf("Variable '%s' not found", s)
-			panic(msg)
-		}
-		ox = append(ox, i)
-	}
-
-	for fp.Next() {
-		for j := 0; j < nvar; j++ {
-			data[j] = append(data[j], fp.Data.Data[j])
-		}
-		for j, k := range ox {
-			data[nvar+j] = append(data[nvar+j], fp.RawData.GetPos(k))
-		}
-	}
-
-	names := append(fp.Names(), others...)
-	return dstream.NewFromArrays(data, names)
 }

@@ -1,0 +1,68 @@
+package dstream
+
+import (
+        "fmt"
+)
+
+func (c *convert) Next() bool {
+
+	if !c.source.Next() {
+		return false
+	}
+
+        // The non-converted variables are just pointer assignments.
+        for j := 0; j < c.source.NumVar(); j++ {
+	        if j != c.vpos {
+                        c.bdata[j] = c.source.GetPos(j)
+	        }
+	}
+
+        // Initialize the backing array if needed
+	to := c.bdata[c.vpos]
+        if to == nil {
+                switch c.dtype {
+		        {{- range . }}
+		        case "{{ .Type }}":
+			        to = make([]{{ .Type }}, 0, 100)
+			{{- end }}
+			default:
+			        msg := fmt.Sprintf("Convert: unknown type %s\n", c.dtype)
+				panic(msg)
+	        }
+	}
+
+        // Need this to do nested switches.
+        {{ $types := . }}
+
+        // Unconverted data
+        from := c.source.GetPos(c.vpos)
+
+        switch to := to.(type) {
+                {{- range $Type1 := $types }}
+                case []{{ $Type1.Type }}:
+		        switch from := from.(type) {
+		            {{- range $Type2 := $types }}
+	                    case []{{ $Type2.Type }}:
+			            {{- if eq $Type1.Type $Type2.Type }}
+				    // Same types, nothing to do
+				    c.bdata[c.vpos] = from
+			            {{- else }}
+				    to = to[0:0]
+			            for _, x := range from {
+                                            to = append(to, {{ $Type1.Type }}(x))
+			            }
+				    c.bdata[c.vpos] = to
+				    {{- end }}
+	                    {{- end }}
+		            default:
+			            msg := fmt.Sprintf("Convert: unknown origin type %T\n", from)
+				    panic(msg)
+                       }
+		{{- end }}
+		default:
+	                msg := fmt.Sprintf("Convert: unkown destination type %T\n", to)
+		        panic(msg)
+	}
+
+	return true
+}

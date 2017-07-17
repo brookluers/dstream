@@ -1,5 +1,11 @@
 package dstream
 
+// ApplyFunc is a function that can be used to generate a new variable
+// from existing variables.  The first argument, say m, is a map from
+// variable names to data (whose concrete types are slices held as
+// empty interfaces).  The second argument is a pre-allocated array
+// (also a slice held as an empty interface) into which the new
+// variable's values are to be written.
 type ApplyFunc func(map[string]interface{}, interface{})
 
 type apply struct {
@@ -18,6 +24,8 @@ func (a *apply) init() {
 	// TODO make type generic
 	switch a.dtype {
 	case "float64":
+		a.bdata[len(a.bdata)-1] = make([]float64, 0)
+	case "uint64":
 		a.bdata[len(a.bdata)-1] = make([]float64, 0)
 	case "string":
 		a.bdata[len(a.bdata)-1] = make([]string, 0)
@@ -61,6 +69,8 @@ func (a *apply) Next() bool {
 	switch x := a.bdata[q].(type) {
 	case []float64:
 		a.bdata[q] = resizefloat64(x, n)
+	case []uint64:
+		a.bdata[q] = resizeuint64(x, n)
 	case []string:
 		a.bdata[q] = resizestring(x, n)
 	default:
