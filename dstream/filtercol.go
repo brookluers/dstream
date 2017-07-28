@@ -123,6 +123,20 @@ func (fc *filterCol) Next() bool {
 			} else {
 				fc.bdata[j] = v
 			}
+		case []uint64:
+			if anydrop {
+				var u []uint64
+				if fc.bdata[j] != nil {
+					u = fc.bdata[j].([]uint64)
+				}
+				u = resizeuint64(u, nkp)
+				for i, j := range fc.keeppos {
+					u[i] = v[j]
+				}
+				fc.bdata[j] = u
+			} else {
+				fc.bdata[j] = v
+			}
 		case []string:
 			if anydrop {
 				var u []string

@@ -147,6 +147,13 @@ func (lc *lagChunk) Next() bool {
 				lc.ldata[jj] = v[(maxlag - k):(n - k)]
 				jj++
 			}
+		case []uint64:
+			n := len(v)
+			lc.nobs += n - maxlag
+			for k := 0; k <= q; k++ {
+				lc.ldata[jj] = v[(maxlag - k):(n - k)]
+				jj++
+			}			
 		case []string:
 			n := len(v)
 			lc.nobs += n - maxlag

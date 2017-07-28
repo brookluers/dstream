@@ -309,6 +309,8 @@ func ToCSV(data Dstream, wtr io.Writer) error {
 				switch x := data.GetPos(j).(type) {
 				case []float64:
 					rec[j] = fmt.Sprintf("%.8f", x[i])
+				case []uint64:
+					rec[j] = fmt.Sprintf("%d", x[i])
 				case []string:
 					rec[j] = x[i]
 				}
