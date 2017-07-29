@@ -87,7 +87,6 @@ func (df *diffChunk) Next() bool {
 			// Segment is too short to use
 			continue
 		}
-		fmt.Printf("---diffchunk reading variable %v\n", oname)
 		q := df.order[oname]
 		switch v := v.(type) {
 		case []float64:
