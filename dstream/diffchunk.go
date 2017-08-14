@@ -87,7 +87,6 @@ func (df *diffChunk) Next() bool {
 			// Segment is too short to use
 			continue
 		}
-
 		q := df.order[oname]
 		switch v := v.(type) {
 		case []float64:
@@ -109,13 +108,32 @@ func (df *diffChunk) Next() bool {
 				df.bdata[jj] = y
 				jj++
 			}
+		case []uint64:
+			n := len(v)
+			df.nobs += n - maxorder
+			df.bdata[jj] = v[maxorder:len(v)]
+			jj++
+			if q > 0 {
+				var y []uint64
+				if df.bdata[jj] != nil {
+					y = df.bdata[jj].([]uint64)
+				}
+				y = resizeuint64(y, n)
+				copy(y, v)
+				y = diffuint64(y, q)
+				if q < maxorder {
+					y = y[maxorder-q : len(y)]
+				}
+				df.bdata[jj] = y
+				jj++
+			}
 		case []string:
 			n := len(v)
 			df.nobs += n - maxorder
 			df.bdata[jj] = v[maxorder:len(v)]
 			jj++
 		default:
-			msg := fmt.Sprintf("unkown data type: %T", v)
+			msg := fmt.Sprintf("unknown data type: %T", v)
 			panic(msg)
 		}
 	}
@@ -128,6 +146,20 @@ func diff1(x []float64) []float64 {
 		x[i] -= x[i-1]
 	}
 	return x[1:len(x)]
+}
+
+func diff1uint64(x []uint64) []uint64 {
+      for i := len(x) - 1; i > 0; i-- {
+      	  x[i] -= x[i-1]
+      }
+      return x[1:len(x)]
+}
+
+func diffuint64(x []uint64, ord int) []uint64 {
+     for j := 0; j < ord; j++ {
+     	 x = diff1uint64(x)
+     }
+     return x
 }
 
 func diff(x []float64, ord int) []float64 {

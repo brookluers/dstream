@@ -77,6 +77,10 @@ func (a *linapply) Next() bool {
 				for i, _ := range z {
 					z[i] += v[k] * x[i]
 				}
+			case []uint64:
+				for i, _ := range z {
+				    z[i] += v[k] * float64(x[i])
+				}
 			case []string:
 				// do nothing
 			default:
