@@ -396,7 +396,8 @@ func (dw *csvWriter) Done() error {
 	rec := make([]string, nvar)
 	fmts := make([]string, nvar)
 
-	firstrow := true
+	firstrow := true       
+	dw.stream.Reset()
 	for dw.stream.Next() {
 		n := ilen(dw.stream.GetPos(0))
 
@@ -428,6 +429,67 @@ func (dw *csvWriter) Done() error {
 	}
 
 	csw.Flush()
+
+	return nil
+}
+
+// DoneByChunk writes the dstream to disk
+// using one file per chunk
+// the files are named using the basename string and the
+// changing values of idcol.
+// It is assumed that the chunks are defined by unique values of idcol.
+func (dw *csvWriter) DoneByChunk(idcol, basename string) error {
+
+	nvar := dw.stream.NumVar()
+	rec := make([]string, nvar)
+	fmts := make([]string, nvar)
+
+	firstrow := true       
+	dw.stream.Reset()
+	for dw.stream.Next() {
+	        curIdCol := dw.stream.Get(idcol).([]uint64)
+		curId := curIdCol[0]
+		n := len(curIdCol)
+		
+		cFile, err := os.Create(fmt.Sprintf("%s%d", basename, curId))
+		if err != nil {
+		   panic(err)
+		}
+		
+		csw := csv.NewWriter(cFile)
+
+	    	err = csw.Write(dw.stream.Names())
+	    	if err != nil {
+		   return err
+		}
+
+		for i := 0; i < n; i++ {
+			for j := 0; j < nvar; j++ {
+				switch x := dw.stream.GetPos(j).(type) {
+				case []float64:
+					if firstrow {
+						fmts[j] = dw.getFmt("float", j)
+					}
+					rec[j] = fmt.Sprintf(fmts[j], x[i])
+				case []uint64:
+					if firstrow {
+					   	fmts[j] = dw.getFmt("int", j)
+					}
+					rec[j] = fmt.Sprintf(fmts[j], x[i])
+				case []string:
+					rec[j] = x[i]
+				default:
+					rec[j] = ""
+				}
+			}
+			if err := csw.Write(rec); err != nil {
+				return err
+			}
+			firstrow = false
+		}
+		csw.Flush()
+		cFile.Close()
+	}
 
 	return nil
 }
