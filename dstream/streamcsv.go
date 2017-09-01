@@ -437,8 +437,9 @@ func (dw *csvWriter) Done() error {
 // using one file per chunk
 // the files are named using the basename string and the
 // changing values of idcol.
-// It is assumed that the chunks are defined by unique values of idcol.
-func (dw *csvWriter) DoneByChunk(idcol, basename, suffix string) error {
+// It is assumed that the chunks are defined by unique values of idcol
+// and that idcol is uint64.
+func (dw *csvWriter) DoneByChunk(idcol, idfmt, basename, suffix string) error {
 
 	nvar := dw.stream.NumVar()
 	rec := make([]string, nvar)
@@ -451,7 +452,7 @@ func (dw *csvWriter) DoneByChunk(idcol, basename, suffix string) error {
 		curId := curIdCol[0]
 		n := len(curIdCol)
 		
-		cFile, err := os.Create(fmt.Sprintf("%s%d%s", basename, curId, suffix))
+		cFile, err := os.Create(fmt.Sprintf("%s%s%s", basename, fmt.Sprintf(idfmt, curId), suffix))
 		if err != nil {
 		   panic(err)
 		}
