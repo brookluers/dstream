@@ -114,7 +114,7 @@ func lex(input string) ([]*token, error) {
 			}
 			tokens = append(tokens, &token{symbol: vname, name: string(name)})
 		default:
-			return nil, fmt.Errorf("invalid formula [1]")
+			return nil, fmt.Errorf("Invalid formula, symbol '%s' is not known.", string(r))
 		}
 	}
 
@@ -297,7 +297,10 @@ func (fp *FormulaParser) Keep(vars []string) *FormulaParser {
 }
 
 func (fp *FormulaParser) Done() dstream.Dstream {
-	fp.init()
+	err := fp.init()
+	if err != nil {
+		panic(err)
+	}
 	return fp
 }
 
@@ -378,7 +381,7 @@ func (fp *FormulaParser) Get(na string) interface{} {
 		}
 	}
 
-	msg := fmt.Sprintf("Formla: variable '%s not found", na)
+	msg := fmt.Sprintf("Formula: variable '%s' not found", na)
 	panic(msg)
 	return nil
 }
@@ -391,8 +394,8 @@ func (fp *FormulaParser) setCodes() {
 	fp.codes = make(map[string]map[string]int)
 	fp.facNames = make(map[string][]string)
 
-	// Codes requires resettable data, since we pass through
-	// through the data to get the code information.
+	// Codes requires resettable data, since we must read through
+	// all the data to get the code information.
 	fp.RawData.Reset()
 	names := fp.RawData.Names()
 
@@ -608,7 +611,10 @@ func (fp *FormulaParser) init() error {
 	}
 
 	// Read one chunk to get the number of variables
-	fp.Next()
+	ok := fp.Next()
+	if !ok {
+		return fmt.Errorf("Unable to read data")
+	}
 	if fp.ErrorState != nil {
 		return fp.ErrorState
 	}
