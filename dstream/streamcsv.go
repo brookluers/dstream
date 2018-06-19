@@ -10,8 +10,8 @@ import (
 	"strconv"
 )
 
-// csvReader supports reading a Dstream from an io.Reader.
-type csvReader struct {
+// CSVReader supports reading a Dstream from an io.Reader.
+type CSVReader struct {
 	rdr    io.Reader
 	csvrdr *csv.Reader
 
@@ -21,6 +21,11 @@ type csvReader struct {
 	// to get the number of columns.
 	stashrec []string
 
+	// If true, skip records with unparseable CSV data, otherwise
+	// panic on them.
+	skipErrors bool
+
+	comma     rune
 	chunkSize int
 	nvar      int
 	nobs      int
@@ -33,6 +38,9 @@ type csvReader struct {
 
 	// If true, all variables are included and converted to float.
 	allFloat bool
+
+	// If true, all variables are included and converted to string.
+	allString bool
 
 	// Names of variables to be converted to floats
 	floatVars []string
@@ -51,9 +59,9 @@ type csvReader struct {
 // least one SetXX method to define variables to be retrieved.  For
 // further configuration, chain calls to other SetXXX methods, and
 // finally call Done to produce the Dstream.
-func FromCSV(r io.Reader) *csvReader {
+func FromCSV(r io.Reader) *CSVReader {
 
-	dr := &csvReader{
+	dr := &CSVReader{
 		rdr: r,
 	}
 
@@ -61,19 +69,26 @@ func FromCSV(r io.Reader) *csvReader {
 }
 
 // Done is called when all configuration is complete to obtain a Dstream.
-func (cs *csvReader) Done() Dstream {
+func (cs *CSVReader) Done() Dstream {
 	cs.init()
+	return cs
+}
+
+// SkipErrors results in lines with unpareable CSV content being
+// skipped (the csv.ParseError is printed to stdio).
+func (cs *CSVReader) SkipErrors() *CSVReader {
+	cs.skipErrors = true
 	return cs
 }
 
 // Close does nothing, the caller should explicitly close the
 // io.Reader passed to FromCSV if needed.
-func (cs *csvReader) Close() {
+func (cs *CSVReader) Close() {
 }
 
 // HasHeader indicates that the first row of the data file contains
 // column names.  The default behavior is that there is no header.
-func (cs *csvReader) HasHeader() *csvReader {
+func (cs *CSVReader) HasHeader() *CSVReader {
 	if cs.doneinit {
 		msg := "FromCSV: can't call HasHeader after beginning data read"
 		panic(msg)
@@ -82,13 +97,43 @@ func (cs *csvReader) HasHeader() *csvReader {
 	return cs
 }
 
-func (cs *csvReader) init() {
+// Comma sets the delimiter (comma rune) for the CSVReader.
+func (cs *CSVReader) Comma(c rune) *CSVReader {
+	cs.comma = c
+	return cs
+}
+
+// Consistency checks for arguments.
+func (cs *CSVReader) checkArgs() {
+
+	if cs.allFloat && cs.allString {
+		msg := "Cannot select AllFloat and AllString.\n"
+		panic(msg)
+	}
+
+	if cs.allFloat && (len(cs.floatVars) > 0 || len(cs.stringVars) > 0) {
+		msg := "Cannot specify AllFloat and FloatVars or StringVars simultaneously"
+		panic(msg)
+	}
+
+	if cs.allString && (len(cs.floatVars) > 0 || len(cs.stringVars) > 0) {
+		msg := "Cannot specify AllString and FloatVars or StringVars simultaneously"
+		panic(msg)
+	}
+}
+
+func (cs *CSVReader) init() {
+
+	cs.checkArgs()
 
 	if cs.chunkSize == 0 {
 		cs.chunkSize = 10000
 	}
 
 	cs.csvrdr = csv.NewReader(cs.rdr)
+	if cs.comma != 0 {
+		cs.csvrdr.Comma = cs.comma
+	}
 
 	// Read the first row (may or may not be column header)
 	var row1 []string
@@ -115,13 +160,18 @@ func (cs *csvReader) init() {
 		}
 	}
 
-	// All variables are selected and have float type
-	if cs.allFloat && len(cs.floatVars) > 0 {
-		fmt.Printf("%v\n", cs.floatVars)
-		msg := "Cannot specify AllFloat and FloatVars simultaneously"
-		panic(msg)
-	} else if cs.allFloat {
+	if cs.allFloat {
+		// All variables are selected and have float type
 		cs.floatVars = vlist
+	} else if cs.allString {
+		// All variables are selected and have float type
+		cs.stringVars = vlist
+	}
+
+	// Variables to extract must be explicitly selected.
+	if len(cs.floatVars)+len(cs.stringVars) == 0 {
+		msg := "No variables specified for reading from CSV file.\n"
+		panic(msg)
 	}
 
 	// Specify certain variables as having float type
@@ -165,14 +215,21 @@ func (cs *csvReader) init() {
 
 // AllFloat results in all variables being selected and converted to
 // float64 type.
-func (cs *csvReader) AllFloat() *csvReader {
+func (cs *CSVReader) AllFloat() *CSVReader {
 	cs.allFloat = true
+	return cs
+}
+
+// AllString results in all variables being selected and treated as
+// string type.
+func (cs *CSVReader) AllString() *CSVReader {
+	cs.allString = true
 	return cs
 }
 
 // SetChunkSize sets the size of chunks for this Dstream, it can only
 // be called before reading begins.
-func (cs *csvReader) SetChunkSize(c int) *csvReader {
+func (cs *CSVReader) SetChunkSize(c int) *CSVReader {
 	cs.chunkSize = c
 	return cs
 }
@@ -180,7 +237,7 @@ func (cs *csvReader) SetChunkSize(c int) *csvReader {
 // SetFloatVars sets the names of the variables to be converted to
 // float64 type.  Refer to the columns by V1, V2, etc. if there is no
 // header row.
-func (cs *csvReader) SetFloatVars(x []string) *csvReader {
+func (cs *CSVReader) SetFloatVars(x []string) *CSVReader {
 	cs.floatVars = x
 	return cs
 }
@@ -188,24 +245,24 @@ func (cs *csvReader) SetFloatVars(x []string) *csvReader {
 // SetStringVars sets the names of the variables to be stored as
 // string type values.  Refer to the columns by V1, V2, etc. if there
 // is no header row.
-func (cs *csvReader) SetStringVars(x []string) *csvReader {
+func (cs *CSVReader) SetStringVars(x []string) *CSVReader {
 	cs.stringVars = x
 	return cs
 }
 
 // Names returns the names of the variables in the dstream.
-func (cs *csvReader) Names() []string {
+func (cs *CSVReader) Names() []string {
 	return cs.names
 }
 
 // NumVar returns the number of variables in the dstream.
-func (cs *csvReader) NumVar() int {
+func (cs *CSVReader) NumVar() int {
 	return cs.nvar
 }
 
 // NumObs returns the number of observations in the dstream.  If the
 // dstream has not been fully read, returns -1.
-func (cs *csvReader) NumObs() int {
+func (cs *CSVReader) NumObs() int {
 	if cs.done {
 		return cs.nobs
 	}
@@ -213,12 +270,12 @@ func (cs *csvReader) NumObs() int {
 }
 
 // GetPos returns a chunk of a data column by column position.
-func (cs *csvReader) GetPos(j int) interface{} {
+func (cs *CSVReader) GetPos(j int) interface{} {
 	return cs.bdata[j]
 }
 
 // Get returns a chunk of a data column by name.
-func (cs *csvReader) Get(na string) interface{} {
+func (cs *CSVReader) Get(na string) interface{} {
 	pos, ok := cs.namepos[na]
 	if !ok {
 		msg := fmt.Sprintf("Variable '%s' not found", na)
@@ -230,9 +287,13 @@ func (cs *csvReader) Get(na string) interface{} {
 // Reset attempts to reset the Dstream that is reading from an
 // io.Reader.  This is only possible if the underlying reader is
 // seekable, so reset panics if the seek cannot be performed.
-func (cs *csvReader) Reset() {
+func (cs *CSVReader) Reset() {
 	if !cs.doneinit {
 		panic("cannot reset, Dstream has not been fully constructed")
+	}
+
+	if cs.nobs == 0 {
+		return
 	}
 
 	r, ok := cs.rdr.(io.ReadSeeker)
@@ -258,7 +319,7 @@ func (cs *csvReader) Reset() {
 }
 
 // Next advances to the next chunk.
-func (cs *csvReader) Next() bool {
+func (cs *CSVReader) Next() bool {
 
 	if cs.done {
 		return false
@@ -279,6 +340,10 @@ func (cs *csvReader) Next() bool {
 				cs.done = true
 				return ilen(cs.bdata[0]) > 0
 			} else if err != nil {
+				if cs.skipErrors {
+					os.Stderr.WriteString(fmt.Sprintf("%v\n", err))
+					continue
+				}
 				panic(err)
 			}
 		}
@@ -318,10 +383,10 @@ type csvWriter struct {
 	wtr io.Writer
 }
 
-// ToCSV supports writing a DStream in CSV format.  Call SetWriter
-// or Filename on the returned value to configure the underlying
-// writer, then call additional methods for customization as desired,
-// and finally call Done to complete the writing.
+// ToCSV writes a Dstream in CSV format.  Call SetWriter or Filename
+// to configure the underlying writer, then call additional methods
+// for customization as desired, and finally call Done to complete the
+// writing.
 func ToCSV(d Dstream) *csvWriter {
 	c := &csvWriter{
 		stream: d,
